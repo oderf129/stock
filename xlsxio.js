@@ -70,9 +70,15 @@
     XLSX.utils.book_append_sheet(wb, sheet(XLSX, ['N° commande', 'Code fournisseur', 'Date commande', 'Livraison prévue', 'Statut', 'Code', 'Référence', 'Cartons', 'Quantité', 'Unité'], orows,
       [13, 15, 14, 15, 11, 12, 30, 9, 10, 8]), 'Commandes');
 
-    XLSX.utils.book_append_sheet(wb, sheet(XLSX, ['Code', 'Nom', 'Unité de comptage', 'Code fournisseur', 'Unités par carton', 'Nom du lot', 'Stock sécurité (j)', 'Commande min', 'Conso manuelle / j', 'Active'],
-      data.items.map((i) => [i.id, i.name, i.unit, i.supplierId || '', +i.packSize || 1, i.packLabel || 'carton', i.safetyDays ?? '', i.minOrder ?? '', i.manualRate ?? '', i.active === false ? 'Non' : 'Oui']),
-      [12, 30, 16, 15, 15, 10, 16, 13, 17, 7]), 'Références');
+    XLSX.utils.book_append_sheet(wb, sheet(XLSX, ['Code', 'Nom', 'Unité de comptage', 'Code fournisseur', 'Unités par carton', 'Nom du lot', 'Stock sécurité (j)', 'Commande min', 'Conso manuelle / j', 'Active', 'Stock minimum'],
+      data.items.map((i) => [i.id, i.name, i.unit, i.supplierId || '', +i.packSize || 1, i.packLabel || 'carton', i.safetyDays ?? '', i.minOrder ?? '', i.manualRate ?? '', i.active === false ? 'Non' : 'Oui', i.minStock ?? '']),
+      [12, 30, 16, 15, 15, 10, 16, 13, 17, 7, 14]), 'Références');
+
+    XLSX.utils.book_append_sheet(wb, sheet(XLSX, ['Plat', 'Code', 'Produit', 'Quantité par plat'],
+      (data.recipes || []).map((r) => [r.dish, r.itemId, nm(r.itemId), +r.qty]), [34, 12, 30, 16]), 'Recettes');
+
+    XLSX.utils.book_append_sheet(wb, sheet(XLSX, ['Date', 'Plat', 'Quantité'],
+      [...(data.sales || [])].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.qty - a.qty)).map((r) => [toXDate(r.date), r.dish, +r.qty]), [12, 40, 10]), 'Ventes');
 
     XLSX.utils.book_append_sheet(wb, sheet(XLSX, ['Code', 'Nom', 'Jours de commande', 'Délai (j)', 'Jours ouvrés', 'Couverture (j)', 'Notes'],
       data.suppliers.map((s) => [s.id, s.name, days(s.orderDays) || 'tous', +s.leadDays || 0, s.leadBusiness ? 'Oui' : 'Non', s.coverDays ?? '', s.notes || '']),
@@ -96,7 +102,7 @@
   }
 
   function fromWorkbook(XLSX, wb) {
-    const data = { version: 1, settings: {}, suppliers: [], items: [], counts: [], receipts: [], orders: [] };
+    const data = { version: 1, settings: {}, suppliers: [], items: [], counts: [], receipts: [], orders: [], recipes: [], sales: [] };
     for (const r of rowsOf(XLSX, wb, 'Fournisseurs')) {
       if (!r['Code'] && !r['Nom']) continue;
       const od = String(r['Jours de commande'] || '').toLowerCase().startsWith('tous') ? [] : parseDays(r['Jours de commande']);
@@ -108,7 +114,7 @@
       data.items.push({ id: String(r['Code'] || uid()), name: String(r['Nom'] || r['Code']), unit: String(r['Unité de comptage'] || ''),
         supplierId: String(r['Code fournisseur'] || '') || null, packSize: num(r['Unités par carton']) || 1, packLabel: String(r['Nom du lot'] || 'carton'),
         safetyDays: num(r['Stock sécurité (j)']), minOrder: num(r['Commande min']), manualRate: num(r['Conso manuelle / j']),
-        active: r['Active'] === '' ? true : yes(r['Active']) });
+        active: r['Active'] === '' ? true : yes(r['Active']), minStock: num(r['Stock minimum']) });
     }
     const byName = Object.fromEntries(data.items.map((i) => [i.name.toLowerCase(), i.id]));
     const ref = (r) => { const c = String(r['Code'] || ''); if (c && data.items.some((i) => i.id === c)) return c; return byName[String(r['Référence'] || '').toLowerCase()] || null; };
@@ -134,6 +140,8 @@
       o.lines.push({ itemId: id, qty: q });
     }
     data.orders = Object.values(orders);
+    data.recipes = rowsOf(XLSX, wb, 'Recettes').filter((r) => r['Plat'] && ref(r)).map((r) => ({ dish: String(r['Plat']).trim(), itemId: ref(r), qty: num(r['Quantité par plat']) || 1 }));
+    data.sales = rowsOf(XLSX, wb, 'Ventes').map((r) => ({ date: fromXDate(r['Date']), dish: String(r['Plat'] || '').trim(), qty: num(r['Quantité']) })).filter((r) => r.date && r.dish && r.qty);
     const set = Object.fromEntries(rowsOf(XLSX, wb, 'Réglages').map((r) => [r['Paramètre'], r['Valeur']]));
     data.settings = {
       closedDays: parseDays(set['Jours de fermeture']),

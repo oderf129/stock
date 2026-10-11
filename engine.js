@@ -82,7 +82,64 @@
     };
   }
 
-  function dailyRate(data, item, today) {
+  // ── Ventes (caisse) × recettes = consommation théorique ──
+  const salesCache = new WeakMap();
+  function salesIndex(data) {
+    const sales = data.sales || [];
+    if (salesCache.has(sales)) return salesCache.get(sales);
+    const byDay = {}; let last = '';
+    for (const r of sales) { (byDay[r.date] = byDay[r.date] || {})[r.dish] = ((byDay[r.date] || {})[r.dish] || 0) + Number(r.qty || 0); if (r.date > last) last = r.date; }
+    const idx = { byDay, last };
+    salesCache.set(sales, idx);
+    return idx;
+  }
+  const recipesOf = (data, itemId) => (data.recipes || []).filter((r) => r.itemId === itemId && Number(r.qty) > 0);
+  // Consommation théorique d'un article le jour d (null si pas de ventes ce jour-là)
+  function theoUse(data, itemId, d) {
+    const rec = recipesOf(data, itemId); if (!rec.length) return null;
+    const day = salesIndex(data).byDay[d]; if (!day) return null;
+    return rec.reduce((s, r) => s + (day[r.dish] || 0) * Number(r.qty), 0);
+  }
+  // Consommation théorique sur [p1, p2], limitée aux jours couverts par des inventaires (pour comparer au réel)
+  function theoConsumption(data, itemId, p1, p2) {
+    const ivs = intervals(data, itemId).filter((i) => i.valid);
+    let total = 0, days = 0;
+    for (let d = p1; d <= p2; d = addDays(d, 1)) {
+      if (!ivs.some((i) => d > i.s && d <= i.e)) continue;
+      const u = theoUse(data, itemId, d); if (u != null) { total += u; days++; }
+    }
+    return { total, days, perDay: days ? total / days : null };
+  }
+  // Modèle de consommation : ventes réelles jusqu'à la veille, puis profil par jour de semaine
+  function usageModel(data, item, today) {
+    const base = dailyRateBase(data, item, today);
+    const rec = recipesOf(data, item.id);
+    if (Number(item.manualRate) > 0 || !rec.length) return base;
+    const idx = salesIndex(data); if (!idx.last) return base;
+    const n = Math.max(28, Number(data.settings.historyDays) || 28);
+    const sum = [0, 0, 0, 0, 0, 0, 0], cnt = [0, 0, 0, 0, 0, 0, 0];
+    let tot = 0, days = 0;
+    for (let d = addDays(idx.last, -n + 1); d <= idx.last; d = addDays(d, 1)) {
+      const u = theoUse(data, item.id, d); if (u == null) continue;
+      sum[dow(d)] += u; cnt[dow(d)]++; tot += u; days++;
+    }
+    if (!days) return base;
+    const avg = tot / days;
+    const profile = sum.map((x, i) => (cnt[i] ? x / cnt[i] : (isOpen(data, addDays('2026-01-04', i)) ? avg : 0)));
+    return { rate: avg, source: `ventes ${days} j`, profile, salesLast: idx.last, theo: true };
+  }
+  function useOn(data, item, m, d) {
+    if (m.theo && d <= m.salesLast) { const u = theoUse(data, item.id, d); if (u != null) return u; }
+    if (m.profile) return m.profile[dow(d)];
+    return isOpen(data, d) ? m.rate || 0 : 0;
+  }
+  const toModel = (r) => (r && typeof r === 'object' ? r : { rate: r });
+  function useBetween(data, item, m, a, b) { // (a, b]
+    let s = 0; for (let d = addDays(a, 1); d <= b; d = addDays(d, 1)) s += useOn(data, item, m, d); return s;
+  }
+
+  function dailyRate(data, item, today) { return usageModel(data, item, today); }
+  function dailyRateBase(data, item, today) {
     if (Number(item.manualRate) > 0) return { rate: Number(item.manualRate), source: 'manuel' };
     const n = Number(data.settings.historyDays) || 28;
     const c = consumption(data, item.id, addDays(today, -n + 1), today);
@@ -117,11 +174,11 @@
     const base = sh(data, lc.date);
     if (date <= base) return +lc.qty;
     return +lc.qty + receiptsBetween(data, item.id, base, date) +
-      pendingBetween(data, item.id, base, date, today) - (rate || 0) * openDays(data, base, date);
+      pendingBetween(data, item.id, base, date, today) - useBetween(data, item, toModel(rate), base, date);
   }
 
   function ruptureDate(data, item, rate, today, horizon = 120) {
-    if (!rate) return null;
+    if (!toModel(rate).rate) return null;
     const lc = lastCount(data, item.id, today);
     if (!lc) return null;
     const start = lc.date < today ? lc.date : today;
@@ -145,11 +202,13 @@
   function suggest(data, item, today) {
     const sup = data.suppliers.find((s) => s.id === item.supplierId) || null;
     const lead = Number(sup ? sup.leadDays : 1) || 0;
-    const { rate, source } = dailyRate(data, item, today);
+    const model = usageModel(data, item, today);
+    const { rate, source } = model;
     const lc = lastCount(data, item.id, today);
     const res = { item, supplier: sup, rate, rateSource: source, lastCount: lc };
     if (!lc) return { ...res, status: 'nocount' };
-    const stockNow = stockAt(data, item, today, rate, today);
+    const stockNow = stockAt(data, item, today, model, today);
+    const minStock = Number(item.minStock) > 0 ? Number(item.minStock) : 0;
     const O = nextOrderDay(sup, today, data);
     const lt = (d) => (sup && sup.leadBusiness ? addBusinessDays(d, lead) : addDays(d, lead));
     const D = lt(O);
@@ -157,20 +216,23 @@
     const D2 = lt(O2);
     if (rate == null) return { ...res, stockNow, orderDate: O, deliveryDate: D, status: 'norate' };
     const safetyDays = item.safetyDays !== '' && item.safetyDays != null ? Number(item.safetyDays) : Number(data.settings.safetyDays || 0);
-    const stockBefore = stockAt(data, item, addDays(D, -1), rate, today);
+    const stockBefore = stockAt(data, item, addDays(D, -1), model, today);
     // Déclenchement : le stock ne tiendra pas jusqu'à la prochaine livraison possible (+ sécurité)
-    const nextOpen = openDays(data, addDays(D, -1), addDays(D2, -1));
+    const nextUse = useBetween(data, item, model, addDays(D, -1), addDays(D2, -1));
     const inNext = pendingBetween(data, item.id, addDays(D, -1), addDays(D2, -1), today);
-    const trigger = rate * (nextOpen + safetyDays) - Math.max(0, stockBefore) - inNext > 0;
+    // stock minimum à maintenir (ex. stock de sécurité d'un produit fait maison)
+    const floor = Math.max(minStock, rate * safetyDays);
+    const trigger = nextUse + floor - Math.max(0, stockBefore) - inNext > 0;
     // Couverture visée : jusqu'à la livraison suivante, ou N jours si le fournisseur a une couverture définie
     const coverEnd = Number(sup && sup.coverDays) > 0 ? addDays(D, Number(sup.coverDays)) : D2;
     const inWindow = pendingBetween(data, item.id, addDays(D, -1), addDays(coverEnd, -1), today);
     const coverOpen = openDays(data, addDays(D, -1), addDays(coverEnd, -1));
-    const need = rate * (coverOpen + safetyDays) - Math.max(0, stockBefore) - inWindow;
+    const coverUse = useBetween(data, item, model, addDays(D, -1), addDays(coverEnd, -1));
+    const need = coverUse + floor - Math.max(0, stockBefore) - inWindow;
     const pack = Number(item.packSize) > 0 ? Number(item.packSize) : 1;
     let qty = trigger && need > 0 ? Math.ceil(need / pack - 1e-9) * pack : 0;
     if (qty > 0 && Number(item.minOrder) > qty) qty = Math.ceil(Number(item.minOrder) / pack) * pack;
-    const rup = ruptureDate(data, item, rate, today);
+    const rup = ruptureDate(data, item, model, today);
     let status = 'ok';
     if (qty > 0) status = O === today ? 'today' : 'later';
     if (rup && rup < D) status = 'risk';
@@ -181,6 +243,6 @@
     };
   }
 
-  const api = { addBusinessDays, addDays, diffDays, dow, todayStr, isOpen, openDays, intervals, consumption, dailyRate, stockAt, ruptureDate, nextOrderDay, suggest, lastCount };
+  const api = { theoConsumption, theoUse, salesIndex, usageModel, addBusinessDays, addDays, diffDays, dow, todayStr, isOpen, openDays, intervals, consumption, dailyRate, stockAt, ruptureDate, nextOrderDay, suggest, lastCount };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
 })(typeof window !== 'undefined' ? window : globalThis);

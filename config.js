@@ -3,7 +3,7 @@
 // (voir README, étape 3). Laisse vide pour utiliser l'app en mode local
 // (données stockées uniquement dans ce navigateur).
 window.APP_CONFIG = {
-  clientId: '',
+  clientId: '417aff8a-c130-4638-81bd-3b595c7bee2e',
   // 'consumers' = comptes Microsoft personnels (hotmail, outlook.com…)
   // 'common'    = comptes personnels ET professionnels (Microsoft 365)
   authority: 'consumers',

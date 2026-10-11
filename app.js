@@ -14,7 +14,7 @@
   const empty = () => ({
     version: 1,
     settings: { closedDays: [], historyDays: 28, safetyDays: 1 },
-    suppliers: [], items: [], counts: [], receipts: [], orders: [],
+    suppliers: [], items: [], counts: [], receipts: [], orders: [], recipes: [], sales: [],
   });
   let data = empty();
   let tab = 'dash';
@@ -246,7 +246,7 @@
   // ───────── Consommation ─────────
   function viewConso() {
     const { consoFrom: f, consoTo: t } = ui;
-    const rows = activeItems().map((i) => ({ i, c: E.consumption(data, i.id, f, t) }));
+    const rows = activeItems().map((i) => ({ i, c: E.consumption(data, i.id, f, t), th: (data.recipes || []).some((r) => r.itemId === i.id) ? E.theoConsumption(data, i.id, f, t) : null }));
     const td = today();
     const first = td.slice(0, 8) + '01';
     const prevLast = E.addDays(first, -1);
@@ -259,15 +259,18 @@
         <label>Du<input type="date" id="cf" value="${f}"></label><label>Au<input type="date" id="ct" value="${t}"></label>
         ${presets.map((p, k) => `<button class="small" data-preset="${k}">${p[0]}</button>`).join('')}
         <button class="small" id="csv">Exporter CSV</button></div>
-        <div class="muted" style="margin-top:8px">Conso = stock début + réceptions − stock fin, entre deux inventaires, répartie au prorata des jours d'ouverture. « Couverture » = part de la période couverte par des inventaires.</div></div>
-      <div class="card table-wrap"><table><thead><tr><th>Référence</th><th class="num">Consommé</th><th class="num">Moy. / jour ouvert</th><th class="num hide-sm">Moy. / semaine</th><th class="num hide-sm">Reçu</th><th>Couverture</th></tr></thead><tbody>
-      ${rows.map(({ i, c }) => {
+        <div class="muted" style="margin-top:8px">Conso = stock début + réceptions − stock fin, entre deux inventaires, répartie au prorata des jours d'ouverture. « Couverture » = part de la période couverte par des inventaires. « Selon ventes » = plats vendus (caisse Zelty) × recettes ; un écart de plus de 10 % signale une perte, une portion différente ou une erreur de comptage (comparer sur des périodes entières entre deux inventaires).</div></div>
+      <div class="card table-wrap"><table><thead><tr><th>Référence</th><th class="num">Consommé</th><th class="num">Moy. / jour ouvert</th><th class="num hide-sm">Moy. / semaine</th><th class="num hide-sm">Reçu</th><th class="num">Selon ventes</th><th class="num">Écart</th><th>Couverture</th></tr></thead><tbody>
+      ${rows.map(({ i, c, th }) => {
+        const ec = th && th.days && c.covered ? (c.total - th.total) / th.total : null;
         const open = data.settings.closedDays.length ? 7 - data.settings.closedDays.length : 7;
         return `<tr><td><b>${esc(i.name)}</b><div class="muted">${esc(supName(i.supplierId))}</div></td>
           <td class="num">${c.covered ? n(c.total) + ' ' + esc(i.unit) : '—'}</td>
           <td class="num">${n(c.perDay)}</td>
           <td class="num hide-sm">${c.perDay != null ? n(c.perDay * open) : '—'}</td>
           <td class="num hide-sm">${n(c.received)}</td>
+          <td class="num">${th && th.days ? n(th.total) + `<div class="muted">mêmes ${th.days} j</div>` : '<span class="muted">—</span>'}</td>
+          <td class="num">${ec == null ? '—' : `<span class="pill ${Math.abs(ec) > 0.1 ? 'risk' : 'ok'}">${ec > 0 ? '+' : ''}${Math.round(ec * 100)} %</span>`}</td>
           <td><div class="bar" title="${Math.round(c.coverage * 100)} %"><i style="width:${Math.round(c.coverage * 100)}%"></i></div><span class="muted">${c.covered}/${c.periodOpen} j</span>${c.unexplained ? `<div class="muted" style="color:var(--warn)" title="Le stock a augmenté entre deux inventaires sans réception saisie : ces jours sont ignorés">⚠ ${c.unexplained} livraison(s) manquante(s)</div>` : ''}</td></tr>`;
       }).join('')}
       </tbody></table></div>`;
@@ -296,6 +299,7 @@
         <label>Nom du lot<input name="packLabel" value="${esc(e.packLabel || 'carton')}" style="width:90px"></label>
         <label>Stock sécurité (j)<input type="number" name="safetyDays" step="any" min="0" value="${e.safetyDays ?? ''}" placeholder="défaut ${data.settings.safetyDays}"></label>
         <label>Commande min.<input type="number" name="minOrder" step="any" min="0" value="${e.minOrder ?? ''}"></label>
+        <label>Stock minimum<input type="number" name="minStock" step="any" min="0" value="${e.minStock ?? ''}" title="Stock à garder en permanence (ex. stock de sécurité d'un produit fait maison)"></label>
         <label>Conso manuelle / j<input type="number" name="manualRate" step="any" min="0" value="${e.manualRate ?? ''}" title="Optionnel : force la conso journalière au lieu du calcul"></label>
         <label>Active<select name="active"><option value="1">Oui</option><option value="0" ${e.active === false ? 'selected' : ''}>Non</option></select></label>
         <button class="primary">${ui.editItem ? 'Enregistrer' : 'Ajouter'}</button>
@@ -310,7 +314,7 @@
       ev.preventDefault();
       const fdat = Object.fromEntries(new FormData(ev.target));
       const obj = { name: fdat.name.trim(), unit: fdat.unit.trim(), supplierId: fdat.supplierId || null, packSize: Number(fdat.packSize) || 1, packLabel: (fdat.packLabel || 'carton').trim(),
-        safetyDays: fdat.safetyDays === '' ? '' : Number(fdat.safetyDays), minOrder: fdat.minOrder === '' ? '' : Number(fdat.minOrder),
+        safetyDays: fdat.safetyDays === '' ? '' : Number(fdat.safetyDays), minOrder: fdat.minOrder === '' ? '' : Number(fdat.minOrder), minStock: fdat.minStock === '' ? '' : Number(fdat.minStock),
         manualRate: fdat.manualRate === '' ? '' : Number(fdat.manualRate), active: fdat.active === '1' };
       if (ui.editItem) Object.assign(data.items.find((i) => i.id === ui.editItem), obj); else data.items.push({ id: uid(), ...obj });
       ui.editItem = null; save(); toast('Référence enregistrée'); render();
@@ -435,7 +439,60 @@
   }
 
   // ───────── Navigation ─────────
-  const views = { dash: viewDash, count: viewCount, receipts: viewReceipts, conso: viewConso, items: viewItems, suppliers: viewSuppliers, settings: viewSettings };
+  // ───────── Recettes : plats vendus → produits ─────────
+  function viewRecipes() {
+    const idx = E.salesIndex(data);
+    const dishes = {};
+    for (const r of data.sales || []) dishes[r.dish] = (dishes[r.dish] || 0) + Number(r.qty || 0);
+    const dishList = Object.entries(dishes).sort((a, b) => b[1] - a[1]);
+    const nbDays = Object.keys(idx.byDay).length;
+    let html = `<h2>Recettes</h2>
+      <div class="card"><p class="muted">Indique quels plats utilisent quel produit, et combien par plat. L'app calcule alors la consommation à partir des ventes de la caisse et prévoit les commandes selon tes jours forts.</p>
+      <form id="recForm" class="row">
+        <label style="flex:1;min-width:200px">Plat (tel que vendu en caisse)<input name="dish" list="dishlist" required placeholder="ex. PORC AU CARAMEL"><datalist id="dishlist">${dishList.map(([d]) => `<option value="${esc(d)}">`).join('')}</datalist></label>
+        <label>Produit utilisé<select name="itemId">${activeItems().map((i) => `<option value="${i.id}">${esc(i.name)}</option>`).join('')}</select></label>
+        <label>Quantité par plat<input type="number" name="qty" step="any" min="0" value="1"></label>
+        <button class="primary">Ajouter</button></form></div>
+      <div class="card table-wrap"><table><thead><tr><th>Plat</th><th>Produit</th><th class="num">Par plat</th><th class="num">Vendus / jour</th><th></th></tr></thead><tbody>
+      ${(data.recipes || []).map((r, k) => { const it = itemById(r.itemId) || {}; return `<tr><td>${esc(r.dish)}</td><td>${esc(it.name || '?')}</td><td class="num">${n(+r.qty)} ${esc(plural(it.unit || '', +r.qty))}</td><td class="num">${nbDays ? n((dishes[r.dish] || 0) / nbDays) : '—'}</td><td class="num"><button class="small danger" data-delrec="${k}">✕</button></td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">Aucune recette pour l\'instant.</td></tr>'}
+      </tbody></table></div>
+      <div class="card"><h3>Ventes enregistrées</h3><p>${nbDays ? `${nbDays} jours de ventes, jusqu'au ${fdl(idx.last)}.` : 'Aucune vente importée.'}</p>
+        <div class="row"><label class="row" style="align-items:center"><span>Importer des ventes (Excel : Date, Plat, Quantité) :</span><input type="file" id="impSales" accept=".xlsx,.csv"></label></div>
+        <p class="muted">Les jours présents dans le fichier remplacent ceux déjà enregistrés.</p></div>`;
+    $('#view').innerHTML = html;
+    $('#recForm').onsubmit = (ev) => {
+      ev.preventDefault(); const fm = new FormData(ev.target);
+      (data.recipes = data.recipes || []).push({ dish: fm.get('dish').trim(), itemId: fm.get('itemId'), qty: Number(fm.get('qty')) || 1 });
+      save(); toast('Recette ajoutée'); render();
+    };
+    $$('[data-delrec]').forEach((b) => (b.onclick = () => { data.recipes.splice(+b.dataset.delrec, 1); save(); render(); }));
+    $('#impSales').onchange = async (ev) => {
+      const f = ev.target.files[0]; if (!f) return;
+      try {
+        const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
+        const ws = wb.Sheets['Ventes'] || wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' }).map((r) => ({ date: XlsxIO.fromXDate(r['Date']), dish: String(r['Plat'] || '').trim(), qty: Number(r['Quantité'] ?? r['Quantite'] ?? 0) })).filter((r) => r.date && r.dish && r.qty);
+        if (!rows.length) throw 0;
+        const days = new Set(rows.map((r) => r.date));
+        data.sales = (data.sales || []).filter((r) => !days.has(r.date)).concat(rows);
+        save(); toast(`${days.size} jours de ventes importés`); render();
+      } catch { toast('Fichier de ventes invalide'); }
+    };
+  }
+
+  // Point d'entrée pour une synchronisation automatique des ventes (tâche planifiée)
+  window.StockApp = {
+    importSales(rows) {
+      const ok = (rows || []).filter((r) => r && r.date && r.dish && Number(r.qty) > 0);
+      const days = new Set(ok.map((r) => r.date));
+      data.sales = (data.sales || []).filter((r) => !days.has(r.date)).concat(ok.map((r) => ({ date: r.date, dish: String(r.dish), qty: Number(r.qty) })));
+      save(); render();
+      return { days: days.size, rows: ok.length, last: E.salesIndex(data).last, status: Store.status };
+    },
+    info() { return { account: Store.account && Store.account.username, status: Store.status, salesLast: E.salesIndex(data).last, counts: data.counts.length }; },
+  };
+
+  const views = { recipes: viewRecipes, dash: viewDash, count: viewCount, receipts: viewReceipts, conso: viewConso, items: viewItems, suppliers: viewSuppliers, settings: viewSettings };
   function render() {
     $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
     views[tab]();

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f6f5c">
+  <title>Stock & Commandes</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">Stock & Commandes</div>
+    <div id="account"></div>
+  </header>
+  <div id="banner" class="banner hidden"></div>
+  <nav id="tabs">
+    <button data-tab="dash" class="active">Commandes</button>
+    <button data-tab="count">Inventaire</button>
+    <button data-tab="receipts">Réceptions</button>
+    <button data-tab="conso">Consommation</button>
+    <button data-tab="items">Références</button>
+    <button data-tab="suppliers">Fournisseurs</button>
+    <button data-tab="settings">Réglages</button>
+  </nav>
+  <main id="view"></main>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="config.js"></script>
+  <script src="vendor/msal-browser.min.js"></script>
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="xlsxio.js"></script>
+  <script src="engine.js"></script>
+  <script src="store.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

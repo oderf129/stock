@@ -43,8 +43,9 @@
     // Synthèse (calculée)
     if (Engine) {
       const t = Engine.todayStr();
+      const all = Engine.suggestAll(data, t);
       const rows = data.items.filter((i) => i.active !== false).map((i) => {
-        const s = Engine.suggest(data, i, t);
+        const s = all.find((x) => x.item.id === i.id);
         const sup = data.suppliers.find((x) => x.id === i.supplierId);
         return [i.name, sup ? sup.name : '', i.unit, s.lastCount ? toXDate(s.lastCount.date) : '', s.lastCount ? +s.lastCount.qty : '',
           s.stockNow != null ? Math.round(Math.max(0, s.stockNow) * 10) / 10 : '', s.rate != null ? Math.round(s.rate * 10) / 10 : '',
@@ -80,9 +81,9 @@
     XLSX.utils.book_append_sheet(wb, sheet(XLSX, ['Date', 'Plat', 'Quantité'],
       [...(data.sales || [])].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.qty - a.qty)).map((r) => [toXDate(r.date), r.dish, +r.qty]), [12, 40, 10]), 'Ventes');
 
-    XLSX.utils.book_append_sheet(wb, sheet(XLSX, ['Code', 'Nom', 'Jours de commande', 'Délai (j)', 'Jours ouvrés', 'Couverture (j)', 'Notes'],
-      data.suppliers.map((s) => [s.id, s.name, days(s.orderDays) || 'tous', +s.leadDays || 0, s.leadBusiness ? 'Oui' : 'Non', s.coverDays ?? '', s.notes || '']),
-      [14, 24, 20, 9, 12, 14, 60]), 'Fournisseurs');
+    XLSX.utils.book_append_sheet(wb, sheet(XLSX, ['Code', 'Nom', 'Jours de commande', 'Délai (j)', 'Jours ouvrés', 'Couverture (j)', 'Notes', 'Type de commande'],
+      data.suppliers.map((s) => [s.id, s.name, days(s.orderDays) || 'tous', +s.leadDays || 0, s.leadBusiness ? 'Oui' : 'Non', s.coverDays ?? '', s.notes || '', s.mode === 'asNeeded' ? 'Quand nécessaire' : 'Jours fixes']),
+      [14, 24, 20, 9, 12, 14, 60, 18]), 'Fournisseurs');
 
     const st = data.settings || {};
     XLSX.utils.book_append_sheet(wb, sheet(XLSX, ['Paramètre', 'Valeur'], [
@@ -107,7 +108,8 @@
       if (!r['Code'] && !r['Nom']) continue;
       const od = String(r['Jours de commande'] || '').toLowerCase().startsWith('tous') ? [] : parseDays(r['Jours de commande']);
       data.suppliers.push({ id: String(r['Code'] || uid()), name: String(r['Nom'] || r['Code']), orderDays: od, leadDays: num(r['Délai (j)']) || 0,
-        leadBusiness: yes(r['Jours ouvrés']), coverDays: num(r['Couverture (j)']), notes: String(r['Notes'] || '') });
+        leadBusiness: yes(r['Jours ouvrés']), coverDays: num(r['Couverture (j)']), notes: String(r['Notes'] || ''),
+        mode: /n[ée]cessaire|besoin/i.test(String(r['Type de commande'] || '')) ? 'asNeeded' : 'fixed' });
     }
     for (const r of rowsOf(XLSX, wb, 'Références')) {
       if (!r['Code'] && !r['Nom']) continue;

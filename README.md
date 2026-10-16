@@ -53,7 +53,7 @@ Ouvre l'adresse dans Safari/Chrome → **Partager / ⋮ → Ajouter à l'écran 
 ## Utilisation
 
 **Mise en place**
-1. **Fournisseurs** : nom, jours où tu peux commander (ex. lundi + jeudi), délai de livraison en jours.
+1. **Fournisseurs** : nom, type de commande (*jours fixes* ou *quand nécessaire*), jours où tu peux commander (ex. lundi + jeudi), délai de livraison en jours. Un même fournisseur avec deux rythmes (ex. Cook'oon sauces le lundi + surgelés quand nécessaire) = deux fiches fournisseur.
 2. **Références** : nom, unité (kg, L, pièce, carton…), fournisseur, colisage (la commande est arrondie au colis), stock de sécurité en jours (optionnel), commande minimum (optionnel).
 3. **Réglages** : jours de fermeture du restaurant (ils ne consomment rien).
 
@@ -68,6 +68,8 @@ Ouvre l'adresse dans Safari/Chrome → **Partager / ⋮ → Ajouter à l'écran 
 - Conso journalière = moyenne sur les 28 derniers jours (modifiable dans Réglages), ou valeur manuelle sur la référence.
 - Quantité suggérée = conso/jour × (jours d'ouverture entre cette livraison et la suivante + jours de sécurité) − stock estimé la veille de la livraison − commandes déjà en cours, **arrondie au colis supérieur**.
 - Alerte **Rupture** si le stock estimé tombe à zéro avant la prochaine livraison possible.
+- **Recalage par les inventaires** : quand une référence a des recettes, la conso théorique (ventes Zelty × recettes) est multipliée par l'écart réel constaté entre tes inventaires (ex. « ×1,15 inv. » = 15 % de plus que prévu : pertes, portions…).
+- **Fournisseur « quand nécessaire »** (ex. surgelés) : le stock théorique part du dernier inventaire et baisse chaque jour selon les ventes. L'app conseille le **dernier jour de commande** possible pour être livré avant que la première référence du fournisseur passe sous son seuil de sécurité (stock minimum ou jours de sécurité), et calcule une commande groupée qui couvre la *couverture visée* (14 j par défaut). Chaque nouvel inventaire recale la projection.
 
 **Sauvegarde** : le classeur Excel sur OneDrive est la sauvegarde (OneDrive garde l'historique des versions). *Réglages → Télécharger le fichier Excel* en fait une copie.
 

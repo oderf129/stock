@@ -78,17 +78,18 @@
   // ───────── Tableau de bord : suggestions de commande ─────────
   function viewDash() {
     const t = today();
-    const sugg = activeItems().map((i) => E.suggest(data, i, t));
+    const sugg = E.suggestAll(data, t);
     const pending = data.orders.filter((o) => o.status === 'pending');
     const nToday = sugg.filter((s) => s.status === 'today').length;
     const nRisk = sugg.filter((s) => s.status === 'risk').length;
     const groups = {};
     for (const s of sugg) {
       if (s.status === 'nocount' || s.status === 'norate') continue;
-      const k = (s.supplier ? s.supplier.id : '_') + '|' + s.orderDate;
-      (groups[k] = groups[k] || { sup: s.supplier, orderDate: s.orderDate, deliveryDate: s.deliveryDate, rows: [] }).rows.push(s);
+      const k = (s.supplier ? s.supplier.id : '_') + '|' + (s.orderDate || '');
+      (groups[k] = groups[k] || { sup: s.supplier, orderDate: s.orderDate, deliveryDate: s.deliveryDate, asNeeded: s.asNeeded, plan: s.plan, rows: [] }).rows.push(s);
     }
-    const gl = Object.values(groups).sort((a, b) => (a.orderDate < b.orderDate ? -1 : a.orderDate > b.orderDate ? 1 : 0));
+    const okey = (g) => g.orderDate || '9999';
+    const gl = Object.values(groups).sort((a, b) => (okey(a) < okey(b) ? -1 : okey(a) > okey(b) ? 1 : 0));
     const missing = sugg.filter((s) => s.status === 'nocount' || s.status === 'norate');
     const pill = (s) => ({
       risk: `<span class="pill risk">Rupture ${fd(s.ruptureDate)}</span>`,
@@ -108,22 +109,29 @@
     gl.forEach((g, gi) => {
       const toOrder = g.rows.filter((r) => r.qty > 0).length;
       const worst = g.rows.some((r) => r.status === 'risk') ? 'risk' : g.orderDate === t && toOrder ? 'today' : '';
+      const an = g.asNeeded;
+      const head = an && !g.orderDate
+        ? `<div class="muted">Commande <b>quand nécessaire</b> · aucune référence ne passe sous son seuil de sécurité dans les 4 prochains mois</div>`
+        : an
+        ? `<div class="muted">Commande <b>quand nécessaire</b> · jour conseillé : <b>${g.orderDate <= t ? "aujourd'hui" : fd(g.orderDate)}</b>${g.orderDate > t ? ' (au plus tard)' : ''} → livraison ${fd(g.deliveryDate)} · couvre jusqu'au ${fd(g.rows[0].nextDelivery)}</div>
+           <div class="muted">${g.plan.late ? '<b style="color:var(--bad)">En retard :</b> ' : 'Déclenché par '}<b>${esc(g.plan.driver.name)}</b>, dont le stock théorique passe sous le seuil de sécurité le ${fd(g.plan.limitDate)} · ${toOrder} réf. à commander</div>`
+        : `<div class="muted">Commander <b>${g.orderDate === t ? "aujourd'hui" : fd(g.orderDate)}</b> → livraison ${fd(g.deliveryDate)} · couvre jusqu'au ${fd(g.rows[0].nextDelivery)} (veille incluse) · ${toOrder} réf. à commander</div>`;
       html += `<div class="card supgroup ${worst}" data-group="${gi}">
         <div class="row" style="justify-content:space-between;align-items:center">
           <div><h3>${esc(g.sup ? g.sup.name : 'Sans fournisseur')}</h3>
-          <div class="muted">Commander <b>${g.orderDate === t ? "aujourd'hui" : fd(g.orderDate)}</b> → livraison ${fd(g.deliveryDate)} · couvre jusqu'au ${fd(g.rows[0].nextDelivery)} (veille incluse) · ${toOrder} réf. à commander</div></div>
-          ${toOrder ? `<button class="primary" data-validate="${gi}">Valider cette commande</button>` : ''}
+          ${head}</div>
+          ${toOrder ? `<button class="primary" data-validate="${gi}">${an && g.orderDate > t ? 'Commander dès maintenant' : 'Valider cette commande'}</button>` : ''}
         </div>
         <div class="table-wrap"><table><thead><tr>
-          <th>Référence</th><th class="num">Stock estimé</th><th class="num hide-sm">Conso / jour</th><th class="num hide-sm">Jours restants</th><th class="num hide-sm">Stock à livraison</th><th class="num">À commander (cartons)</th><th>Statut</th>
+          <th>Référence</th><th class="num">Stock estimé</th><th class="num hide-sm">Conso / jour</th><th class="num hide-sm">Jours restants</th>${an ? '<th class="num">Sous le seuil le</th>' : ''}<th class="num hide-sm">Stock à livraison</th><th class="num">À commander (cartons)</th><th>Statut</th>
         </tr></thead><tbody>
-        ${g.rows.sort((a, b) => b.qty - a.qty).map((s) => `<tr>
+        ${g.rows.sort((a, b) => (an ? (a.limitDate || '9999') < (b.limitDate || '9999') ? -1 : (a.limitDate || '9999') > (b.limitDate || '9999') ? 1 : b.qty - a.qty : b.qty - a.qty)).map((s) => `<tr>
           <td><b>${esc(s.item.name)}</b><div class="muted">inv. ${fdl(s.lastCount.date)} : ${n(+s.lastCount.qty)} ${esc(plural(s.item.unit, +s.lastCount.qty))}</div></td>
           <td class="num">${n(Math.round(Math.max(0, s.stockNow)))} ${esc(plural(s.item.unit, 2))}</td>
           <td class="num hide-sm">${n(s.rate)}<div class="muted">${esc(s.rateSource)}</div></td>
-          <td class="num hide-sm">${n(s.daysLeft)}</td>
-          <td class="num hide-sm">${n(Math.max(0, s.stockAtDelivery))}</td>
-          <td class="num" title="Besoin brut : ${n(s.need)} ${esc(s.item.unit)}">${lotField(s.item, `data-item="${s.item.id}"`, s.qty)}</td>
+          <td class="num hide-sm">${n(s.daysLeft)}</td>${an ? `<td class="num">${s.limitDate ? fd(s.limitDate) : '<span class="muted">&gt; 4 mois</span>'}<div class="muted">seuil ${n(Math.round((s.floor || 0) * 10) / 10)}</div></td>` : ''}
+          <td class="num hide-sm">${s.stockAtDelivery != null ? n(Math.max(0, s.stockAtDelivery)) : '—'}</td>
+          <td class="num" title="Besoin brut : ${n(s.need)} ${esc(s.item.unit)}">${g.orderDate ? lotField(s.item, `data-item="${s.item.id}"`, s.qty) : '—'}</td>
           <td>${pill(s)}</td></tr>`).join('')}
         </tbody></table></div></div>`;
     });
@@ -133,6 +141,7 @@
 
     if (pending.length) html += `<div class="card"><h3>Commandes en attente</h3>${pending.map(orderLine).join('')}<p><a href="#" data-go="receipts">Réceptionner →</a></p></div>`;
 
+    if (gl.some((g) => g.asNeeded)) html += `<p class="muted">Fournisseurs « quand nécessaire » : le stock théorique part du dernier inventaire, baisse chaque jour selon les ventes Zelty × recettes (recalées sur l'écart réel constaté entre tes inventaires, ex. « ×1,1 inv. »), et la commande est conseillée le dernier jour possible pour être livré avant que la première référence passe sous son seuil de sécurité (stock minimum ou jours de sécurité). La commande couvre alors la couverture visée du fournisseur (14 j par défaut).</p>`;
     html += `<p class="muted">Calcul : conso moyenne par jour d'ouverture sur les ${data.settings.historyDays} derniers jours × (jours entre cette livraison et la suivante + stock de sécurité) − stock estimé à la livraison − commandes déjà en cours, arrondi au colis.</p>`;
     $('#view').innerHTML = html;
 
@@ -141,7 +150,9 @@
       const card = b.closest('.card');
       const lines = $$('[data-item]', card).map((i) => ({ itemId: i.dataset.item, qty: readQty(i) || 0 })).filter((l) => l.qty > 0);
       if (!lines.length) return toast('Aucune quantité à commander');
-      data.orders.push({ id: uid(), supplierId: g.sup ? g.sup.id : null, orderDate: t, deliveryDate: g.deliveryDate < t ? t : g.deliveryDate, lines, status: 'pending' });
+      let dd = g.deliveryDate < t ? t : g.deliveryDate;
+      if (g.asNeeded && g.orderDate > t) { const lead = Number(g.sup.leadDays) || 0; dd = g.sup.leadBusiness ? E.addBusinessDays(t, lead) : E.addDays(t, lead); }
+      data.orders.push({ id: uid(), supplierId: g.sup ? g.sup.id : null, orderDate: t, deliveryDate: dd, lines, status: 'pending' });
       save(); toast('Commande enregistrée — à réceptionner à la livraison'); render();
     }));
   }
@@ -337,6 +348,7 @@
       <div class="card"><h3>${ui.editSup ? 'Modifier' : 'Nouveau fournisseur'}</h3>
       <form id="supForm" class="row">
         <label>Nom<input name="name" required value="${esc(e.name)}" placeholder="ex. Metro"></label>
+        <label>Type de commande<select name="mode"><option value="fixed">Jours fixes</option><option value="asNeeded" ${e.mode === 'asNeeded' ? 'selected' : ''}>Quand nécessaire</option></select></label>
         <label>Jours où je peux commander<div class="days">${[1, 2, 3, 4, 5, 6, 0].map((d) => `<label><input type="checkbox" name="od" value="${d}" ${od.includes(d) ? 'checked' : ''}>${DOW[d]}</label>`).join('')}</div></label>
         <label>Délai de livraison (jours)<input type="number" name="leadDays" min="0" step="1" value="${e.leadDays ?? 1}"></label>
         <label>Délai compté en<select name="leadBusiness"><option value="0">jours calendaires</option><option value="1" ${e.leadBusiness ? 'selected' : ''}>jours ouvrés (lun-ven)</option></select></label>
@@ -344,16 +356,16 @@
         <label style="flex:1;min-width:180px">Contact / notes<input name="notes" value="${esc(e.notes)}"></label>
         <button class="primary">${ui.editSup ? 'Enregistrer' : 'Ajouter'}</button>
         ${ui.editSup ? '<button type="button" id="cancelSup">Annuler</button>' : ''}
-      </form><p class="muted">Aucun jour coché = commande possible tous les jours. Délai 1 = commande lundi, livraison mardi. Couverture vide = chaque commande couvre jusqu'à la livraison suivante.</p></div>
+      </form><p class="muted">« Quand nécessaire » : l'app calcule le jour de commande selon le stock théorique (ex. surgelés) ; les jours cochés sont alors les jours où le fournisseur accepte une commande. Aucun jour coché = commande possible tous les jours. Délai 1 = commande lundi, livraison mardi. Couverture vide = chaque commande couvre jusqu'à la livraison suivante.</p></div>
       <div class="card table-wrap"><table><thead><tr><th>Nom</th><th>Jours de commande</th><th class="num">Délai</th><th class="hide-sm">Notes</th><th></th></tr></thead><tbody>
-      ${data.suppliers.map((s) => `<tr><td><b>${esc(s.name)}</b><div class="muted">${data.items.filter((i) => i.supplierId === s.id).length} réf.</div></td><td>${(s.orderDays || []).length ? [1, 2, 3, 4, 5, 6, 0].filter((d) => s.orderDays.includes(d)).map((d) => DOW[d]).join(', ') : 'tous les jours'}</td><td class="num">${s.leadDays} j${s.leadBusiness ? ' ouvrés' : ''}${Number(s.coverDays) > 0 ? `<div class="muted">couvre ${s.coverDays} j</div>` : ''}</td><td class="hide-sm muted">${esc(s.notes)}</td>
+      ${data.suppliers.map((s) => `<tr><td><b>${esc(s.name)}</b><div class="muted">${data.items.filter((i) => i.supplierId === s.id).length} réf.</div></td><td>${s.mode === 'asNeeded' ? '<b>Quand nécessaire</b><div class="muted">' : ''}${(s.orderDays || []).length ? [1, 2, 3, 4, 5, 6, 0].filter((d) => s.orderDays.includes(d)).map((d) => DOW[d]).join(', ') : 'tous les jours'}${s.mode === 'asNeeded' ? '</div>' : ''}</td><td class="num">${s.leadDays} j${s.leadBusiness ? ' ouvrés' : ''}${Number(s.coverDays) > 0 ? `<div class="muted">couvre ${s.coverDays} j</div>` : ''}</td><td class="hide-sm muted">${esc(s.notes)}</td>
         <td class="num"><button class="small" data-edit="${s.id}">Modifier</button> <button class="small danger" data-del="${s.id}">✕</button></td></tr>`).join('')}
       </tbody></table></div>`;
     $('#view').innerHTML = html;
     $('#supForm').onsubmit = (ev) => {
       ev.preventDefault();
       const fm = new FormData(ev.target);
-      const obj = { name: fm.get('name').trim(), orderDays: fm.getAll('od').map(Number), leadDays: Number(fm.get('leadDays')) || 0, leadBusiness: fm.get('leadBusiness') === '1', coverDays: fm.get('coverDays') === '' ? '' : Number(fm.get('coverDays')), notes: fm.get('notes') };
+      const obj = { name: fm.get('name').trim(), mode: fm.get('mode') === 'asNeeded' ? 'asNeeded' : 'fixed', orderDays: fm.getAll('od').map(Number), leadDays: Number(fm.get('leadDays')) || 0, leadBusiness: fm.get('leadBusiness') === '1', coverDays: fm.get('coverDays') === '' ? '' : Number(fm.get('coverDays')), notes: fm.get('notes') };
       if (ui.editSup) Object.assign(data.suppliers.find((s) => s.id === ui.editSup), obj); else data.suppliers.push({ id: uid(), ...obj });
       ui.editSup = null; save(); toast('Fournisseur enregistré'); render();
     };

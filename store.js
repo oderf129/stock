@@ -9,6 +9,8 @@
     mode: cfg.clientId ? 'onedrive' : 'local',
     account: null,
     eTag: null,
+    // Sécurité anti-écrasement : on n'écrit sur OneDrive qu'après avoir lu la version en ligne
+    remoteReady: false,
     status: 'idle', // idle | loading | saving | saved | error | offline
     onStatus: () => {},
     msal: null,
@@ -68,13 +70,14 @@
       this.setStatus('loading');
       const t = await this.token();
       const meta = await fetch(this.path(), { headers: { Authorization: 'Bearer ' + t } });
-      if (meta.status === 404) { this.eTag = null; this.setStatus('saved'); return null; }
+      if (meta.status === 404) { this.eTag = null; this.remoteReady = true; this.setStatus('saved'); return null; }
       if (!meta.ok) throw new Error('OneDrive ' + meta.status);
       const m = await meta.json();
       this.eTag = m.eTag;
       const res = await fetch(m['@microsoft.graph.downloadUrl']);
       const data = await this.decode(res);
-      this.writeCache(data);
+      data._base = m.eTag; data._dirty = false;
+      this.remoteReady = true;
       this.setStatus('saved');
       return data;
     },
@@ -89,13 +92,18 @@
       if (res.status === 423) { const e = new Error('locked'); e.locked = true; throw e; }
       if (!res.ok) throw new Error('OneDrive ' + res.status);
       this.eTag = (await res.json()).eTag;
+      data._base = this.eTag; data._dirty = false;
+      this.writeCache(data);
     },
 
     _timer: null,
     save(data) {
       data.updatedAt = new Date().toISOString();
+      data._dirty = true;
       this.writeCache(data);
       if (this.mode !== 'onedrive' || !this.account) { this.setStatus('saved'); return; }
+      // Version en ligne pas (encore) lue : on garde la saisie sur cet appareil, sans toucher au fichier OneDrive
+      if (!this.remoteReady) { this.setStatus('error', "Saisie gardée sur cet appareil : le fichier OneDrive n'a pas pu être lu, il n'a pas été modifié. Recharge la page."); return; }
       this.setStatus('saving');
       clearTimeout(this._timer);
       this._timer = setTimeout(async () => {

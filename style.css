@@ -69,3 +69,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .qty { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .qty input { width: 64px; }
 .qty .muted { font-size: 12px; white-space: nowrap; }
+
+.deadline { margin: 4px 0; padding: 6px 10px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-size: 14px; }
+.deadline.late { background: var(--bad-soft); color: var(--bad); }
+.kpi-deadline.late b { color: var(--bad); }
+.kpi-deadline b { color: var(--accent); font-size: 20px; }

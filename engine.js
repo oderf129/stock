@@ -269,8 +269,20 @@
         const o = latestOrderDay(data, sup, R, today);
         if (!best || o.date < best.date || (o.date === best.date && R < best.limit)) best = { ...o, limit: R, item: it };
       }
-      const plan = best ? { orderDate: best.date, late: best.late, limitDate: best.limit, driver: best.item } : { orderDate: null };
-      for (const it of list) out.push(suggest(data, it, today, plan));
+      // Date limite de commande pour éviter la RUPTURE (stock à zéro) de chaque référence
+      const dl = {};
+      let first = null;
+      for (const it of list) {
+        const m = usageModel(data, it, today);
+        if (!m.rate) continue;
+        const R0 = thresholdDate(data, it, m, today, 1e-6);
+        if (!R0) continue;
+        const o = latestOrderDay(data, sup, R0, today);
+        dl[it.id] = { rupture: R0, orderBy: o.date, late: o.late };
+        if (!first || o.date < first.orderBy || (o.date === first.orderBy && R0 < first.rupture)) first = { ...dl[it.id], item: it };
+      }
+      const plan = best ? { orderDate: best.date, late: best.late, limitDate: best.limit, driver: best.item, deadline: first } : { orderDate: null, deadline: first };
+      for (const it of list) { const s = suggest(data, it, today, plan); if (s) { s.deadline = dl[it.id] || null; out.push(s); } }
     }
     return out;
   }

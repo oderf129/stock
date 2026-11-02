@@ -92,7 +92,8 @@
     const gl = Object.values(groups).sort((a, b) => (okey(a) < okey(b) ? -1 : okey(a) > okey(b) ? 1 : 0));
     const missing = sugg.filter((s) => s.status === 'nocount' || s.status === 'norate');
     const pill = (s) => ({
-      risk: `<span class="pill risk">Rupture ${fd(s.ruptureDate)}</span>`,
+      // commandes hebdomadaires : pas de date de rupture affichée, juste « À commander »
+      risk: '<span class="pill today">À commander</span>',
       today: '<span class="pill today">À commander</span>',
       later: '<span class="pill later">Prévu</span>',
       ok: '<span class="pill ok">OK</span>',
@@ -101,19 +102,21 @@
     let html = `<h2>Suggestions de commande</h2>
       <div class="kpis">
         <div class="kpi"><b>${nToday + nRisk}</b><span>références à commander maintenant</span></div>
-        <div class="kpi"><b style="color:var(--bad)">${nRisk}</b><span>risques de rupture avant livraison</span></div>
         <div class="kpi"><b>${pending.length}</b><span>commandes en attente de réception</span></div>
+        ${gl.filter((g) => g.asNeeded && g.plan && g.plan.deadline).map((g) => `<div class="kpi kpi-deadline ${g.plan.deadline.late || g.plan.deadline.orderBy <= t ? 'late' : ''}"><b>${g.plan.deadline.orderBy <= t ? "Aujourd'hui" : fd(g.plan.deadline.orderBy)}</b><span>date limite de commande ${esc(g.sup.name)} (rupture ${esc(g.plan.deadline.item.name)} le ${fd(g.plan.deadline.rupture)})</span></div>`).join('')}
       </div>`;
     if (!data.items.length) html += `<div class="card">Commence par créer tes <a href="#" data-go="suppliers">fournisseurs</a> et tes <a href="#" data-go="items">références</a>, puis fais un <a href="#" data-go="count">inventaire</a>. Il faut au moins deux inventaires pour calculer une consommation (ou une conso manuelle sur la référence).</div>`;
 
     gl.forEach((g, gi) => {
       const toOrder = g.rows.filter((r) => r.qty > 0).length;
-      const worst = g.rows.some((r) => r.status === 'risk') ? 'risk' : g.orderDate === t && toOrder ? 'today' : '';
       const an = g.asNeeded;
+      const dlg = an && g.plan && g.plan.deadline;
+      const worst = dlg ? (dlg.late || dlg.orderBy <= t ? 'risk' : '') : g.orderDate === t && toOrder ? 'today' : '';
       const head = an && !g.orderDate
         ? `<div class="muted">Commande <b>quand nécessaire</b> · aucune référence ne passe sous son seuil de sécurité dans les 4 prochains mois</div>`
         : an
-        ? `<div class="muted">Commande <b>quand nécessaire</b> · jour conseillé : <b>${g.orderDate <= t ? "aujourd'hui" : fd(g.orderDate)}</b>${g.orderDate > t ? ' (au plus tard)' : ''} → livraison ${fd(g.deliveryDate)} · couvre jusqu'au ${fd(g.rows[0].nextDelivery)}</div>
+        ? `${g.plan.deadline ? `<div class="deadline ${g.plan.deadline.late || g.plan.deadline.orderBy <= t ? 'late' : ''}">Commander au plus tard le <b>${g.plan.deadline.orderBy <= t ? "aujourd'hui" : fd(g.plan.deadline.orderBy)}</b> pour éviter la rupture de <b>${esc(g.plan.deadline.item.name)}</b> le ${fd(g.plan.deadline.rupture)}${g.plan.deadline.late ? ' — <b>déjà trop tard pour l\'éviter</b>' : ''}</div>` : ''}
+           <div class="muted">Commande <b>quand nécessaire</b> · jour conseillé avec marge de sécurité : <b>${g.orderDate <= t ? "aujourd'hui" : fd(g.orderDate)}</b>${g.orderDate > t ? ' (au plus tard)' : ''} → livraison ${fd(g.deliveryDate)} · couvre jusqu'au ${fd(g.rows[0].nextDelivery)}</div>
            <div class="muted">${g.plan.late ? '<b style="color:var(--bad)">En retard :</b> ' : 'Déclenché par '}<b>${esc(g.plan.driver.name)}</b>, dont le stock théorique passe sous le seuil de sécurité le ${fd(g.plan.limitDate)} · ${toOrder} réf. à commander</div>`
         : `<div class="muted">Commander <b>${g.orderDate === t ? "aujourd'hui" : fd(g.orderDate)}</b> → livraison ${fd(g.deliveryDate)} · couvre jusqu'au ${fd(g.rows[0].nextDelivery)} (veille incluse) · ${toOrder} réf. à commander</div>`;
       html += `<div class="card supgroup ${worst}" data-group="${gi}">
@@ -123,16 +126,17 @@
           ${toOrder ? `<button class="primary" data-validate="${gi}">${an && g.orderDate > t ? 'Commander dès maintenant' : 'Valider cette commande'}</button>` : ''}
         </div>
         <div class="table-wrap"><table><thead><tr>
-          <th>Référence</th><th class="num">Stock estimé</th><th class="num hide-sm">Conso / jour</th><th class="num hide-sm">Jours restants</th>${an ? '<th class="num">Sous le seuil le</th>' : ''}<th class="num hide-sm">Stock à livraison</th><th class="num">À commander (cartons)</th><th>Statut</th>
+          <th>Référence</th><th class="num">Stock estimé</th><th class="num hide-sm">Conso / jour</th><th class="num hide-sm">Jours restants</th>${an ? '<th class="num">Rupture le</th><th class="num">Commander avant le</th>' : ''}<th class="num hide-sm">Stock à livraison</th><th class="num">À commander (cartons)</th>
         </tr></thead><tbody>
-        ${g.rows.sort((a, b) => (an ? (a.limitDate || '9999') < (b.limitDate || '9999') ? -1 : (a.limitDate || '9999') > (b.limitDate || '9999') ? 1 : b.qty - a.qty : b.qty - a.qty)).map((s) => `<tr>
+        ${g.rows.sort((a, b) => { if (!an) return b.qty - a.qty; const ka = (a.deadline && a.deadline.orderBy) || '9999', kb = (b.deadline && b.deadline.orderBy) || '9999'; return ka < kb ? -1 : ka > kb ? 1 : b.qty - a.qty; }).map((s) => `<tr>
           <td><b>${esc(s.item.name)}</b><div class="muted">inv. ${fdl(s.lastCount.date)} : ${n(+s.lastCount.qty)} ${esc(plural(s.item.unit, +s.lastCount.qty))}</div></td>
           <td class="num">${n(Math.round(Math.max(0, s.stockNow)))} ${esc(plural(s.item.unit, 2))}</td>
           <td class="num hide-sm">${n(s.rate)}<div class="muted">${esc(s.rateSource)}</div></td>
-          <td class="num hide-sm">${n(s.daysLeft)}</td>${an ? `<td class="num">${s.limitDate ? fd(s.limitDate) : '<span class="muted">&gt; 4 mois</span>'}<div class="muted">seuil ${n(Math.round((s.floor || 0) * 10) / 10)}</div></td>` : ''}
+          <td class="num hide-sm">${n(s.daysLeft)}</td>${an ? `<td class="num">${s.deadline ? fd(s.deadline.rupture) : '<span class="muted">&gt; 4 mois</span>'}${s.limitDate ? `<div class="muted">sous le seuil (${n(Math.round((s.floor || 0) * 10) / 10)}) le ${fd(s.limitDate)}</div>` : ''}</td>
+          <td class="num">${s.deadline ? `<b style="${s.deadline.late || s.deadline.orderBy <= t ? 'color:var(--bad)' : ''}">${s.deadline.orderBy <= t ? "aujourd'hui" : fd(s.deadline.orderBy)}</b>` : '<span class="muted">—</span>'}</td>` : ''}
           <td class="num hide-sm">${s.stockAtDelivery != null ? n(Math.max(0, s.stockAtDelivery)) : '—'}</td>
           <td class="num" title="Besoin brut : ${n(s.need)} ${esc(s.item.unit)}">${g.orderDate ? lotField(s.item, `data-item="${s.item.id}"`, s.qty) : '—'}</td>
-          <td>${pill(s)}</td></tr>`).join('')}
+          </tr>`).join('')}
         </tbody></table></div></div>`;
     });
 

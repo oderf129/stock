@@ -529,15 +529,22 @@
       const remote = await Store.loadRemote();
       if (!remote) {
         if (data.items.length) { Store.save(data); toast('Données envoyées sur OneDrive'); }
-      } else if (cached && cached.updatedAt && remote.updatedAt && cached.updatedAt > remote.updatedAt) {
+      } else if (cached && cached._dirty && cached._base && cached._base === remote._base) {
+        // saisies faites hors ligne sur la même version que celle en ligne : on les envoie
         Store.save(data); toast('Modifications hors ligne synchronisées');
       } else {
+        // la version en ligne fait foi ; d'éventuelles saisies locales non synchronisées sont mises de côté, jamais envoyées
+        if (cached && cached._dirty) {
+          try { localStorage.setItem('stockapp.data.nonsync.' + Date.now(), JSON.stringify(cached)); } catch {}
+          banner("Des saisies faites sur cet appareil sans connexion OneDrive n'ont pas été envoyées, pour ne pas écraser le fichier en ligne. Refais-les si besoin.", true);
+        }
         data = normalize(remote);
+        Store.writeCache(data);
       }
       render();
     } catch (e) {
       console.error(e);
-      banner('Impossible de joindre OneDrive — affichage des données de cet appareil.', true);
+      banner("Impossible de lire le fichier OneDrive — rien ne sera enregistré en ligne tant que la page n'a pas été rechargée.", true);
     }
   })();
 })();
